@@ -1,5 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Hello World application
+Description: Hello World application (Flask in an Auto Scaling group behind a load balancer)
+
 Parameters:
 
   ImageId:
@@ -8,25 +9,26 @@ Parameters:
 
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
-    Default: mykey
+    Default: vockey   # the key pair every AWS Academy Learner Lab has
 
 Resources:
-  Lc:
-    Type: AWS::AutoScaling::LaunchConfiguration
-    Properties:
-      InstanceType: t2.micro
-      ImageId: !Ref ImageId
-      SecurityGroups:
-        - !Ref AppSg
-      KeyName: !Ref KeyName
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          /opt/aws/bin/cfn-init -v \
-          --stack ${AWS::StackName} \
-          --resource Lc --configsets InstallAndRun \
-          --region ${AWS::Region}
+
+  # CHANGE 1: Launch Template instead of Launch Configuration.
+  # New AWS accounts (created after 2024-10-01) are not allowed to create
+  # Launch Configurations at all, so the original "Lc" would fail.
+  Lt:
+    Type: AWS::EC2::LaunchTemplate
+    # The cfn-init setup list. UserData below calls it with --resource Lt
     Metadata:
+      # CHANGE 2: let cfn-init download the file from our PRIVATE S3 bucket,
+      # using the permissions of the role that the instance has (LabRole).
+      # The original used a plain https link, which gives 403 on a private bucket.
+      AWS::CloudFormation::Authentication:
+        S3Auth:
+          type: S3
+          buckets:
+            - !ImportValue S3Bucket
+          roleName: LabRole
       AWS::CloudFormation::Init:
         configSets:
           InstallAndRun:
@@ -40,14 +42,15 @@ Resources:
             /opt/helloworld.py:
               owner: root
               group: root
-              mode: 755
-              source: !Sub 
+              mode: '000755'
+              source: !Sub
                 - "https://${bucket}.s3.${AWS::Region}.${AWS::URLSuffix}/hello-world-flask.py"
                 - bucket: !ImportValue S3Bucket
+              authentication: S3Auth
             /etc/systemd/system/helloworld.service:
               owner: root
               group: root
-              mode: 755
+              mode: '000644'
               content: |
                 [Unit]
                 Description=HelloWorld service
@@ -55,25 +58,39 @@ Resources:
                 [Service]
                 Type=simple
                 User=root
-                ExecStart=/opt/helloworld.py
+                # CHANGE 3: start it with python3 explicitly, so it does not
+                # depend on a "#!" first line inside the .py file
+                ExecStart=/usr/bin/python3 /opt/helloworld.py
                 Restart=on-abort
                 [Install]
                 WantedBy=multi-user.target
           commands:
             installflask:
-              # This commands runs installation
               command: "pip3 install flask"
-              # This commands runs BEFORE command above
-              # and checks if pip3 is present on system
-              # if return code is not 0 cfn-init stops
               test: "which pip3"
             reloadsystemd:
               command: "systemctl daemon-reload"
           services:
             sysvinit:
               helloworld:
-                enabled: "true"
-                ensureRunning: "true"
+                enabled: true
+                ensureRunning: true
+    Properties:
+      LaunchTemplateData:
+        InstanceType: t2.micro
+        ImageId: !Ref ImageId
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref AppSg
+        IamInstanceProfile:
+          Name: LabInstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            /opt/aws/bin/cfn-init -v \
+            --stack ${AWS::StackName} \
+            --resource Lt --configsets InstallAndRun \
+            --region ${AWS::Region}
 
   AppSg:
     Type: AWS::EC2::SecurityGroup
@@ -139,6 +156,13 @@ Resources:
       VPCZoneIdentifier:
         - !ImportValue Subnet1Id
         - !ImportValue Subnet2Id
-      LaunchConfigurationName: !Ref Lc
+      LaunchTemplate:
+        LaunchTemplateId: !Ref Lt
+        Version: !GetAtt Lt.LatestVersionNumber
       TargetGroupARNs:
         - !Ref Tg
+
+Outputs:
+  LoadBalancerDns:
+    Description: Open this address (or curl it)
+    Value: !GetAtt Elb.DNSName
