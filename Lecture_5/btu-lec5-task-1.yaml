@@ -40,23 +40,82 @@ Mappings:
 Resources:
   WebServerInstance:
     Type: AWS::EC2::Instance
+    # 9. CreationPolicy: CloudFormation waits for the signal from cfn-signal (max 10 minutes)
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT10M
     Metadata:
-      # 1. Add code from '1. Configure _Metadata_ section' here
+      # 1. The setup list that cfn-init reads
+      AWS::CloudFormation::Init:
         config:
           packages:
-            # 2. Add the code from '1. Install HTTPD and PHP packages' section here
+            # 2. Install Apache (httpd) and PHP with yum
+            yum:
+              httpd: []
+              php: []
 
           files:
-            # 3. Add the /var/www/html/index.php file from '2. Create index.php file' section here
+            # 3. The web page
+            /var/www/html/index.php:
+              content: |
+                <!DOCTYPE html>
+                <html>
+                  <body>
+                    <center>
+                      <?php
+                      # Get the instance ID from meta-data and store it in the $instance_id variable
+                      $url = "http://169.254.169.254/latest/meta-data/instance-id";
+                      $instance_id = file_get_contents($url);
+                      # Get the instance's availability zone from metadata and store it in the $zone variable
+                      $url = "http://169.254.169.254/latest/meta-data/placement/availability-zone";
+                      $zone = file_get_contents($url);
+                      ?>
+                      <h2>EC2 Instance ID: <?php echo $instance_id ?></h2>
+                      <h2>Availability Zone: <?php echo $zone ?></h2>
+                    </center>
+                  </body>
+                </html>
+              mode: '000644'
+              owner: apache
+              group: apache
 
-            # 6. Add the /etc/cfn/cfn-hup.conf file from '3. Configure cfn-hup' section here
+            # 6. cfn-hup main config: which stack to watch and how often (every 1 minute)
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+              mode: '000400'
+              owner: root
+              group: root
 
-            # 7. Add the /etc/cfn/hooks.d/cfn-auto-reloader.conf file from '3. Configure cfn-hup' section here
+            # 7. cfn-hup hook: when the stack is updated, run cfn-init again
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerInstance --region ${AWS::Region}
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
 
           services:
-            # 4. Add the code from '3. Enable and start Apache web server' section here
-
-            # 8. Add the code from '3. Configure cfn-hup' section here
+            sysvinit:
+              # 4. Start Apache now and on every reboot
+              httpd:
+                enabled: true
+                ensureRunning: true
+              # 8. Start cfn-hup, and restart it if its two config files change
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
 
     Properties:
       ImageId: !Ref AmiID
@@ -67,11 +126,14 @@ Resources:
         - Key: Name
           Value: !Join [ '-', [ !Ref EnvironmentType, webserver ] ]
       UserData:
-        # 5. Add the code from '4. Call cfn-init script' here
-
-        # 10. Add the cfn-signal from '4. Configure cfn-signal and CreationPolicy attribute' here
-
-    # 9. Add the Creation policy parameter from '4. Configure cfn-signal and CreationPolicy attribute' here
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          # 5. Update aws-cfn-bootstrap to the latest
+          yum install -y aws-cfn-bootstrap
+          # 5. Call cfn-init script to install files and packages
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerInstance --region ${AWS::Region}
+          # 10. Call cfn-signal script to send a signal with exit code
+          /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource WebServerInstance --region ${AWS::Region}
 
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
