@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  BlockPublicAccess:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+  ProjectName:
+    Type: String
+    Default: MyBucket
+
+Resources:
+  LogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "my-app-logs-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: !Ref BlockPublicAccess
+        BlockPublicPolicy: !Ref BlockPublicAccess
+        IgnorePublicAcls: !Ref BlockPublicAccess
+        RestrictPublicBuckets: !Ref BlockPublicAccess
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
