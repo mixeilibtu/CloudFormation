@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  DBEngine:
+    Type: String
+    Default: mysql
+    AllowedValues: [mysql, postgres]
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t1.micro
+
+  AllocatedStorage:
+    Type: Number
+    Default: 8
+
+  DBName:
+    Type: String
+
+  MasterUsername:
+    Type: String
+
+  MasterUserPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  DBSubnetGroupName:
+    Type: String
+
+  VPCSecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+
+Resources:
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: !Ref DBEngine
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      DBName: !Ref DBName
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterUserPassword
+      DBSubnetGroupName: !Ref DBSubnetGroupName
+      VPCSecurityGroups: !Ref VPCSecurityGroupIds
